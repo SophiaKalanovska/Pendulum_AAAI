@@ -43,8 +43,7 @@ if __name__ == "__main__":
     # image = np.expand_dims(image, axis=0)
 
     # Get model
-    model, preprocess = inception_v3.InceptionV3(), inception_v3.preprocess_input
-    # model, preprocess = inception.InceptionV3(), inception.preprocess_input
+    model, preprocess = inception.InceptionV3(), inception.preprocess_input
 
     # Strip softmax layer
     model = innvestigate.utils.model_wo_softmax(model)
@@ -55,10 +54,11 @@ if __name__ == "__main__":
     # Add batch axis and preprocess
     x = preprocess(image[None])
 
-    predictions = inception_v3.decode_predictions(model.predict_on_batch(x))
+    predictions = inception.decode_predictions(model.predict_on_batch(x))
+    print(predictions)
     # distribute the relevance to the input layer
     start_time = time.time()
-    a = analyzer.analyze(x)
+    a, tensors_Xs = analyzer.analyze(x)
     print("--- %s minutes ---" % ((time.time() - start_time) / 60))
 
     # Aggregate along color channels and normalize to [-1, 1]
@@ -79,11 +79,11 @@ if __name__ == "__main__":
     # Create masks for each cluster found on the level with highest activation
     masks = two_dimensional_clusters.DbSCAN_for_activations(categories, image_size)
 
-    relevance_clusters = mask_to_relevance.mask_to_input_relevance_of_mask(masks, a, image_name)
+    heatmaps = mask_to_relevance.mask_to_input_relevance_of_mask(masks, a, image_name)
 
-    relevance = analyzer.propagate_forward(relevance_clusters)
-
-
-
+    # forward_analyzer = innvestigate.create_analyzer("lrp.alpha_1_beta_0", model)
+    relevances = []
+    for heatmap in heatmaps:
+        relevances.append(analyzer.propagate_forward(tensors_Xs, heatmap))
 
 

@@ -29,14 +29,12 @@ from innvestigate.utils.keras import backend as iK
 from innvestigate.utils.keras import graph as kgraph
 from . import utils as rutils
 
-
 # TODO: differentiate between LRP and DTD rules?
 # DTD rules are special cases of LRP rules with additional assumptions
 __all__ = [
-    #dedicated treatment for special layers
+    # dedicated treatment for special layers
 
-
-    #general rules
+    # general rules
     "ZRule",
     "ZIgnoreBiasRule",
 
@@ -72,7 +70,7 @@ class ZRule(kgraph.ReverseMappingBase):
                                                              keep_bias=bias,
                                                              name_template="reversed_kernel_%s")
 
-    def apply(self, Xs, Ys, Rs, reverse_state):
+    def apply(self, Xs, Ys, Rs, reversed_jacobian_Ys, reverse_state):
         grad = ilayers.GradientWRT(len(Xs))
 
         # Get activations.
@@ -113,7 +111,7 @@ class EpsilonRule(kgraph.ReverseMappingBase):
         self._layer_wo_act = kgraph.copy_layer_wo_activation(
             layer, keep_bias=bias, name_template="reversed_kernel_%s")
 
-    def apply(self, Xs, Ys, Rs, reverse_state):
+    def apply(self, Xs, Ys, Rs, reversed_jacobian_Ys, reverse_state):
         grad = ilayers.GradientWRT(len(Xs))
         # The epsilon rule aligns epsilon with the (extended) sign: 0 is considered to be positive
         prepare_div = keras.layers.Lambda(
@@ -161,7 +159,7 @@ class WSquareRule(kgraph.ReverseMappingBase):
             weights=weights,
             name_template="reversed_kernel_%s")
 
-    def apply(self, Xs, Ys, Rs, reverse_state):
+    def apply(self, Xs, Ys, Rs, reversed_jacobian_Ys, reverse_state):
         grad = ilayers.GradientWRT(len(Xs))
         # Create dummy forward path to take the derivative below.
         Ys = kutils.apply(self._layer_wo_act_b, Xs)
@@ -257,10 +255,15 @@ class AlphaBetaRule(kgraph.ReverseMappingBase):
             weights=negative_weights,
             name_template="reversed_kernel_negative_%s")
 
-    def apply(self, Xs, Ys, Rs, reverse_state):
+    def apply(self, Xs, Ys, Rs, reverse_state, forward=False):
         # this method is correct, but wasteful
+        if forward == False:
+            return self.apply_back(Xs, Ys, Rs, reverse_state)
+        else:
+            return self.apply_forward(Xs, Ys, Rs, reverse_state)
+
+    def apply_back(self, Xs, Ys, Rs, reverse_state):
         grad = ilayers.GradientWRT(len(Xs))
-        jacobian = ilayers.Percent_matrix(len(Xs))
         times_alpha = keras.layers.Lambda(lambda x: x * self._alpha)
         times_beta = keras.layers.Lambda(lambda x: x * self._beta)
         keep_positives = keras.layers.Lambda(lambda x: x * K.cast(K.greater(x, 0), K.floatx()))
@@ -275,27 +278,66 @@ class AlphaBetaRule(kgraph.ReverseMappingBase):
             # Divide incoming relevance by the activations.
             Sk = [ilayers.SafeDivide()([a, b])
                   for a, b in zip(Rs, Zs)]
-            #
-            # jac1, tmp1 = iutils.to_list(jacobian(X1 + Z1 + Sk))
-            # jac2, tmp2 = iutils.to_list(jacobian(X2 + Z2 + Sk))
-            #
-            # tmp1 = iutils.to_list(tmp1)
-            # tmp2 = iutils.to_list(tmp2)
-            #
-            # jac1 = iutils.to_list(jac1)
-            # jac2 = iutils.to_list(jac2)
-            tmp1 = iutils.to_list(grad(X1 + Z1 + Sk))
-            tmp2 = iutils.to_list(grad(X2 + Z2 + Sk))
 
-            tmp1 = [keras.layers.Multiply()([a, b])
-                    for a, b in zip(X1, tmp1)]
-            tmp2 = [keras.layers.Multiply()([a, b])
-                    for a, b in zip(X2, tmp2)]
+            Rj_1 = iutils.to_list(grad(X1 + Z1 + Sk))
+            Rj_2 = iutils.to_list(grad(X2 + Z2 + Sk))
 
-            # combine and return
+            Rj_1 = [keras.layers.Multiply()([a, b])
+                    for a, b in zip(X1, Rj_1)]
+            Rj_2 = [keras.layers.Multiply()([a, b])
+                    for a, b in zip(X2, Rj_2)]
+
             return [keras.layers.Add()([a, b])
-                    for a, b in zip(tmp1, tmp2)]
+                    for a, b in zip(Rj_1, Rj_2)]
+            # , [keras.layers.Add()([a, b])
+            #     for a, b in zip(Lk_1, Lk_2)]
 
+        # Distinguish postive and negative inputs.
+        Xs_pos = kutils.apply(keep_positives, Xs)
+        Xs_neg = kutils.apply(keep_negatives, Xs)
+        # xpos*wpos + xneg*wneg
+        activator_relevances = f(self._layer_wo_act_positive,
+                                 self._layer_wo_act_negative,
+                                 Xs_pos, Xs_neg)
+
+        if self._beta:  # only compute beta-weighted contributions of beta is not zero
+            # xpos*wneg + xneg*wpos
+            inhibitor_relevances = f(self._layer_wo_act_negative,
+                                     self._layer_wo_act_positive,
+                                     Xs_pos, Xs_neg)
+            return [keras.layers.Subtract()([times_alpha(a), times_beta(b)])
+                    for a, b in zip(activator_relevances, inhibitor_relevances)]
+        else:
+            return activator_relevances
+
+    def apply_forward(self, Xs, Ys, Rs, reverse_state):
+        # grad = ilayers.GradientWRT(len(Xs))
+        percent_matrix = ilayers.RelevanceK(len(Xs))
+        times_alpha = keras.layers.Lambda(lambda x: x * self._alpha)
+        times_beta = keras.layers.Lambda(lambda x: x * self._beta)
+        keep_positives = keras.layers.Lambda(lambda x: x * K.cast(K.greater(x, 0), K.floatx()))
+        keep_negatives = keras.layers.Lambda(lambda x: x * K.cast(K.less(x, 0), K.floatx()))
+
+        def f(layer1, layer2, X1, X2):
+            # Get activations of full positive or negative part.
+            Z1 = kutils.apply(layer1, X1)
+            Z2 = kutils.apply(layer2, X2)
+            Zs = [keras.layers.Add()([a, b])
+                  for a, b in zip(Z1, Z2)]
+            # Divide incoming relevance by the activations.
+            Sk = [ilayers.SafeDivide()([a, b])
+                  for a, b in zip(Rs, Zs)]
+
+            Rjk_1 = iutils.to_list(percent_matrix(X1 + Z1 + Sk + reverse_state['relevance']))
+            Rjk_2 = iutils.to_list(percent_matrix(X2 + Z2 + Sk + reverse_state['relevance']))
+            #
+            Rk_1 = [keras.layers.Multiply()([a, b])
+                    for a, b in zip(X1, Rjk_1)]
+            Rk_2 = [keras.layers.Multiply()([a, b])
+                    for a, b in zip(X2, Rjk_2)]
+
+            # return [keras.layers.Add()([a, b])
+            #         for a, b in zip(Rj_1, Rj_2)]
 
         # Distinguish postive and negative inputs.
         Xs_pos = kutils.apply(keep_positives, Xs)

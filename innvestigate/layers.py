@@ -196,72 +196,93 @@ class GradientWRT(keras.layers.Layer):
         # carry over the input mask
         return mask
 
+# class Percent_matrix(keras.layers.Layer):
+#     def __init__(self, n_inputs, **kwargs):
+#         self.n_inputs = n_inputs
+#         self.isThree = True
+#
+#         super(Percent_matrix, self).__init__(**kwargs)
+#
+#     def call(self, x):
+#         assert isinstance(x, (list, tuple))
+#         Xs, tmp_Ys = x[:self.n_inputs], x[self.n_inputs:]
+#         assert len(tmp_Ys) % 2 == 0
+#         len_Ys = len(tmp_Ys) // 2
+#         Ys, Sk = tmp_Ys[:len_Ys], tmp_Ys[len_Ys:]
 
-class Percent_matrix(keras.layers.Layer):
-    def __init__(self, n_inputs, **kwargs):
-        self.n_inputs = n_inputs
-        self.isThree = True
-
-        super(Percent_matrix, self).__init__(**kwargs)
-
-    def call(self, x):
-        assert isinstance(x, (list, tuple))
-        Xs, tmp_Ys = x[:self.n_inputs], x[self.n_inputs:]
-        assert len(tmp_Ys) % 2 == 0
-        len_Ys = len(tmp_Ys) // 2
-        Ys, Sk = tmp_Ys[:len_Ys], tmp_Ys[len_Ys:]
         # jacobian_matrix = Jacobian(len(Xs))(x)
         # jacobian_matrix = iutils.to_list(jacobian_matrix)
-        toReturn = iutils.to_list(jacobian(Ys[0], Xs[0]))
-        # ones = tf.ones([1, Ys[0].shape[-1]], tf.float32)
+        # ones = tf.ones([1, Ys[0].shape[-1].value], tf.float32)
         # X = [tf.expand_dims(Xs[i], -1) * ones for i in range(len(Xs))]
         # R_jk = [keras.layers.Multiply()([jm, x])
         #         for jm, x in zip(jacobian_matrix, X)]
-        grad_j = iK.gradients(Xs, Ys, Sk)
-        R_j = [keras.layers.Multiply()([a, b]) for a, b in zip(Xs, grad_j)]
-
+        # grad_j = iK.gradients(Xs, Ys, Sk)
+        # R_j = [keras.layers.Multiply()([a, b]) for a, b in zip(Xs, grad_j)]
+        # # thousand = tf.fill([R_jk.shape], 1000.00)
+        # #     tf.ones([1, Ys[0].shape[-1].value], tf.float32)
         # Rj = [tf.expand_dims(R_j[i], -1) * ones for i in range(len(R_j))]
+        # # toReturn = [tf.math.divide_no_nan(a, b) for a,b in zip(R_jk, Rj)]
         # toReturn = [a / (b + iK.to_floatx(K.equal(b, K.constant(0))) * K.epsilon()) for a, b in zip(R_jk, Rj)]
         #
-        [toReturn.append(R_j[i]) for i in range(len(R_j))]
-        return toReturn
+        # [toReturn.append(R_j[i]) for i in range(len(R_j))]
+        # return toReturn
+
+    # def compute_output_shape(self, input_shapes):
+    #     toReturnRj = []
+    #     toReturnLk = []
+    #     for i in range(len(input_shapes) - 2):
+    #         toReturnLk.append(input_shapes[i] + (input_shapes[-1][-1],))
+    #         toReturnRj.append(input_shapes[i])
+    #     toReturn = toReturnLk + toReturnRj
+    #     return toReturn
 
 
-    def compute_output_shape(self, input_shapes):
-        toReturnRj = []
-        toReturnLk = []
-        for i in range(len(input_shapes) - 2):
-            toReturnLk.append(input_shapes[i] + (input_shapes[-1],))
-            toReturnRj.append(input_shapes[i])
-        toReturn = toReturnLk + toReturnRj
-        return toReturn
-
-class Percent_matrix_wo_act(keras.layers.Layer):
+class RelevanceK(keras.layers.Layer):
     def __init__(self, n_inputs, **kwargs):
         self.n_inputs = n_inputs
         self.isThree = True
-        super(Percent_matrix_wo_act, self).__init__(**kwargs)
+
+        super(RelevanceK, self).__init__(**kwargs)
 
     def call(self, x):
         assert isinstance(x, (list, tuple))
         Xs, tmp_Ys = x[:self.n_inputs], x[self.n_inputs:]
-        assert len(tmp_Ys) % 2 == 0
-        len_Ys = len(tmp_Ys) // 2
-        Ys, Sk = tmp_Ys[:len_Ys], tmp_Ys[len_Ys:]
+        Ys, rest = tmp_Ys[:1], tmp_Ys[1:]
+        Sk, rest = rest[:1], rest[1:]
+        current_Rj, past_Rj = rest[:1], rest[1:]
 
-        jacobian_matrix = Jacobian(len(Xs))(x)
-        toReturn = iutils.to_list(jacobian_matrix)
-        # ones = tf.ones([1, Ys[0].shape[-1].value], tf.float32)
+        # constant
+        grad_j = iK.gradients(Xs, Ys, Sk)
+        R_j = [keras.layers.Multiply()([a, b]) for a, b in zip(Xs, grad_j)]
 
-        grad = iK.gradients(Xs, Ys, Sk)
-        # R_j = iutils.to_list(grad)
-        #
-        # Rj = [tf.expand_dims(R_j[i], -1) * ones for i in range(len(R_j))]
-        # toReturn =[a / (b + iK.to_floatx(K.equal(b, K.constant(0))) * K.epsilon()) for a, b in zip(jacobian_matrix, Rj)]
-        #
-        [toReturn.append(grad[i]) for i in range(len(grad))]
-        return toReturn
 
+        shape_Ys = Ys[0].shape.dims[1:]
+        intermidiate = []
+        final = []
+        # changes
+        for i in range(shape_Ys[-1]):
+            if i > 0:
+                final = tf.concat(final, -1)
+            for j in range(shape_Ys[-2]):
+                if j > 0:
+                    stacked = tf.stack(intermidiate, -1)
+                    final.append(tf.expand_dims(stacked, -1))
+                    intermidiate = []
+                for k in range(shape_Ys[-3]):
+                    sparse_layer = tf.SparseTensor(indices=[[0, k, j, i]], values=[1.0],
+                                                     dense_shape=[1, Ys[0].shape[-3].value, Ys[0].shape[-2].value,
+                                                                  Ys[0].shape[-1].value])
+                    mask = tf.sparse.to_dense(sparse_layer, 0.0, name=None)
+                    new_Sk = Sk[0] * mask
+                    jacobian_matrix = iK.gradients(Xs, Ys, new_Sk)
+
+                    R_j_partial = [keras.layers.Multiply()([jm, x])
+                            for jm, x in zip(Xs, jacobian_matrix)]
+
+                    percent_Rk = [a / (b + iK.to_floatx(K.equal(b, K.constant(0))) * K.epsilon()) for a, b in zip(R_j_partial, R_j)]
+                    toSum = [keras.layers.Multiply()([percent, current_Rj]) for percent, current_Rj in zip(percent_Rk, current_Rj)]
+                    intermidiate.append(tf.math.reduce_sum(toSum))
+            return final
 
     def compute_output_shape(self, input_shapes):
         toReturnRj = []
@@ -271,6 +292,101 @@ class Percent_matrix_wo_act(keras.layers.Layer):
             toReturnRj.append(input_shapes[i])
         toReturn = toReturnLk + toReturnRj
         return toReturn
+
+# class Jacobian(keras.layers.Layer):
+#     def __init__(self, n_inputs, **kwargs):
+#         self.n_inputs = n_inputs
+#         self.isThree = True
+#
+#         super(Jacobian, self).__init__(**kwargs)
+#
+#     def call(self, x):
+#         assert isinstance(x, (list, tuple))
+#         Xs, tmp_Ys = x[:self.n_inputs], x[self.n_inputs:]
+#         assert len(tmp_Ys) % 2 == 0
+#         len_Ys = len(tmp_Ys) // 2
+#         Ys, Sk = tmp_Ys[:len_Ys], tmp_Ys[len_Ys:]
+#
+#         # jacobian_matrix = jacobian(Xs[0], Ys[0])
+#         # jacobian_matrix = jacobian(Xs[0], tmp_Ys[0])
+#
+#         sparse_layer = K.tf.SparseTensor(indices=[[0, 0, 0, 0]], values=[1.0], dense_shape=[1, Ys[0].shape[-3].value, Ys[0].shape[-2].value, Ys[0].shape[-1].value])
+#         mask = K.tf.sparse.to_dense(sparse_layer, 0.0, name=None)
+#         new_Sk = Sk[0] * mask
+#         Ck1 = iK.gradients(Xs, Ys, new_Sk)
+
+    #     jacobian_matrices = []
+    #     jacobian_matrices = [jacobian_matrices.append(None) for x in range(len(Xs))]
+    #     for i in range(len(Xs)):
+    #         Ck1_ex = K.tf.expand_dims(Ck1[i], -1)
+    #         jacobian_matrices[i] = Ck1_ex
+    #
+    #     shape_out = []
+    #     for i in range(len(x) - 2):
+    #         shape_out.append(tf.TensorShape(x[i].shape.dims + [tf.compat.v1.Dimension(None)]))
+    #
+    #     m0 = tf.constant(1)
+    #     c = lambda m, a: m < Ys[0].shape[-1].value
+    #     b = lambda m, a: [m + 1, self.jac(Xs, Ys, Sk, m, a)]
+    #     r = tf.while_loop(
+    #         c, b, loop_vars=[m0, jacobian_matrices],
+    #         shape_invariants=[m0.get_shape(), shape_out])
+    #     jacobian_matrix = r[1]
+    #     return jacobian_matrix
+    #
+    # def jac(self, Xs, Ys, Sk, m, a):
+    #     sparse_layer = K.tf.SparseTensor(indices=[[0, m]], values=[1.0], dense_shape=[1, Ys[0].shape[-1].value])
+    #     mask = K.tf.sparse.to_dense(sparse_layer, 0.0, name=None)
+    #     new_Sk = Sk[0] * mask
+    #     Ck1 = iK.gradients(Xs, Ys, new_Sk)
+    #     for i in range(len(Xs)):
+    #         Ck1_ex = K.tf.expand_dims(Ck1[i], -1)
+    #         a[i] = K.tf.concat([a[i], Ck1_ex], -1)
+    #     return a
+    #
+    # def compute_output_shape(self, input_shapes):
+    #     toReturnLk = []
+    #     for i in range(len(input_shapes) - 2):
+    #         toReturnLk.append(input_shapes[i] + (input_shapes[-1][-1],))
+    #     return toReturnLk
+
+
+#
+# class Percent_matrix_wo_act(keras.layers.Layer):
+#     def __init__(self, n_inputs, **kwargs):
+#         self.n_inputs = n_inputs
+#         self.isThree = True
+#         super(Percent_matrix_wo_act, self).__init__(**kwargs)
+#
+#     def call(self, x):
+#         assert isinstance(x, (list, tuple))
+#         Xs, tmp_Ys = x[:self.n_inputs], x[self.n_inputs:]
+#         assert len(tmp_Ys) % 2 == 0
+#         len_Ys = len(tmp_Ys) // 2
+#         Ys, Sk = tmp_Ys[:len_Ys], tmp_Ys[len_Ys:]
+#
+#         jacobian_matrix = Jacobian(len(Xs))(x)
+#         jacobian_matrix = iutils.to_list(jacobian_matrix)
+#         ones = tf.ones([1, Ys[0].shape[-1].value], tf.float32)
+#
+#         grad = iK.gradients(Xs, Ys, Sk)
+#         R_j = iutils.to_list(grad)
+#
+#         Rj = [tf.expand_dims(R_j[i], -1) * ones for i in range(len(R_j))]
+#         toReturn = [a / (b + iK.to_floatx(K.equal(b, K.constant(0))) * K.epsilon()) for a, b in zip(jacobian_matrix, Rj)]
+#
+#         [toReturn.append(grad[i]) for i in range(len(grad))]
+#         return toReturn
+#
+#
+#     def compute_output_shape(self, input_shapes):
+#         toReturnRj = []
+#         toReturnLk = []
+#         for i in range(len(input_shapes) - 2):
+#             toReturnLk.append(input_shapes[i] + (input_shapes[-1][-1],))
+#             toReturnRj.append(input_shapes[i])
+#         toReturn = toReturnLk + toReturnRj
+#         return toReturn
 
 #
 # class Jacobian(keras.layers.Layer):
@@ -287,14 +403,14 @@ class Percent_matrix_wo_act(keras.layers.Layer):
 #         len_Ys = len(tmp_Ys) // 2
 #         Ys, Sk = tmp_Ys[:len_Ys], tmp_Ys[len_Ys:]
 #
-#         sparse_layer = tf.sparse.SparseTensor(indices=[[0, 0]], values=[1.0], dense_shape=[1, Ys[0].shape[-1]])
-#         mask = tf.sparse.to_dense(sparse_layer, 0.0, name=None)
+#         sparse_layer = K.tf.SparseTensor(indices=[[0, 0]], values=[1.0], dense_shape=[1, Ys[0].shape[-1].value])
+#         mask = K.tf.sparse.to_dense(sparse_layer, 0.0, name=None)
 #         new_Sk = Sk[0] * mask
 #         Ck1 = iK.gradients(Xs, Ys, new_Sk)
 #         jacobian_matrices = []
 #         jacobian_matrices = [jacobian_matrices.append(None) for x in range(len(Xs))]
 #         for i in range(len(Xs)):
-#             Ck1_ex = tf.expand_dims(Ck1[i], -1)
+#             Ck1_ex = K.tf.expand_dims(Ck1[i], -1)
 #             jacobian_matrices[i] = Ck1_ex
 #
 #         shape_out = []
@@ -302,7 +418,7 @@ class Percent_matrix_wo_act(keras.layers.Layer):
 #             shape_out.append(tf.TensorShape(x[i].shape.dims + [tf.compat.v1.Dimension(None)]))
 #
 #         m0 = tf.constant(1)
-#         c = lambda m, a: m < Ys[0].shape[-1]
+#         c = lambda m, a: m < Ys[0].shape[-1].value
 #         b = lambda m, a: [m + 1, self.jac(Xs, Ys, Sk, m, a)]
 #         r = tf.while_loop(
 #             c, b, loop_vars=[m0, jacobian_matrices],
@@ -311,8 +427,8 @@ class Percent_matrix_wo_act(keras.layers.Layer):
 #         return jacobian_matrix
 #
 #     def jac(self, Xs, Ys, Sk, m, a):
-#         sparse_layer = tf.sparse.SparseTensor(indices=[[0, m]], values=[1.0], dense_shape=[1, Ys[0].shape[-1]])
-#         mask = tf.sparse.to_dense(sparse_layer, 0.0, name=None)
+#         sparse_layer = K.tf.SparseTensor(indices=[[0, m]], values=[1.0], dense_shape=[1, Ys[0].shape[-1].value])
+#         mask = K.tf.sparse.to_dense(sparse_layer, 0.0, name=None)
 #         new_Sk = Sk[0] * mask
 #         Ck1 = iK.gradients(Xs, Ys, new_Sk)
 #         for i in range(len(Xs)):
@@ -325,6 +441,110 @@ class Percent_matrix_wo_act(keras.layers.Layer):
 #         for i in range(len(input_shapes) - 2):
 #             toReturnLk.append(input_shapes[i] + (input_shapes[-1][-1],))
 #         return toReturnLk
+#
+# class Jacobian_Batch_Normalisation_Layer(keras.layers.Layer):
+#     def __init__(self, n_inputs, **kwargs):
+#         self.n_inputs = n_inputs
+#         self.isThree = True
+#
+#         super(Jacobian_Batch_Normalisation_Layer, self).__init__(**kwargs)
+#
+#     def call(self, x):
+#         assert isinstance(x, (list, tuple))
+#         Xs, tmp_Ys = x[:self.n_inputs], x[self.n_inputs:]
+#         len_tmp_Ys = len(tmp_Ys) // 2
+#         Ys_Rs, y_minus_beta_x_minus_mu = tmp_Ys[:len_tmp_Ys], tmp_Ys[len_tmp_Ys:]
+#         Ys, Rs = Ys_Rs[:1], Ys_Rs[1:]
+#         y_minus_beta, x_minus_mu = y_minus_beta_x_minus_mu[:1], y_minus_beta_x_minus_mu[1:]
+#
+#         sparse_layer = K.tf.SparseTensor(indices=[[0, 0]], values=[1.0], dense_shape=[1, Ys[0].shape[-1].value])
+#         mask = K.tf.sparse.to_dense(sparse_layer, 0.0, name=None)
+#         slice_Ys = [Ys[0] * mask]
+#         slice_Rs = [Rs[0] * mask]
+#
+#         numerator = [keras.layers.Multiply()([x, ymb, r])
+#                      for x, ymb, r in zip(Xs, y_minus_beta, slice_Rs)]
+#         denominator = [keras.layers.Multiply()([xmm, y])
+#                        for xmm, y in zip(x_minus_mu, slice_Ys)]
+#
+#         Ck1 = numerator[0] / (denominator[0] + iK.to_floatx(K.equal(denominator[0], K.constant(0))) * K.epsilon())
+#         jacobian_matrices = K.tf.expand_dims(Ck1, -1)
+#
+#         shape_out = tf.TensorShape(x[0].shape.dims + [tf.compat.v1.Dimension(None)])
+#
+#         m0 = tf.constant(1)
+#         c = lambda m, a: m < Ys[0].shape[-1].value
+#         b = lambda m, a: [m + 1, self.jac(Xs, Ys, Rs, y_minus_beta, x_minus_mu, m, a)]
+#         # r = tf.while_loop(
+#         #     c, b, loop_vars=[m0, jacobian_matrices],
+#         #     shape_invariants=[m0.get_shape(), shape_out])
+#         r = for_loop(b, tf.TensorShape(x[0].shape.dims), Ys[0].shape[-1].value)
+#         return r[1]
+#
+#     def jac(self, Xs, Ys, Rs, y_minus_beta, x_minus_mu, m, a):
+#
+#         sparse_layer = K.tf.SparseTensor(indices=[[0, m]], values=[1.0], dense_shape=[1, Ys[0].shape[-1].value])
+#         mask = K.tf.sparse.to_dense(sparse_layer, 0.0, name=None)
+#         new_Ys = [Ys[0] * mask]
+#         new_Rs = [Rs[0] * mask]
+#
+#         numerator = [keras.layers.Multiply()([x, ymb, r])
+#                      for x, ymb, r in zip(Xs, y_minus_beta, new_Rs)]
+#         denominator = [keras.layers.Multiply()([xmm, y])
+#                        for xmm, y in zip(x_minus_mu, new_Ys)]
+#
+#         Ck1 = numerator[0] / (denominator[0] + iK.to_floatx(K.equal(denominator[0], K.constant(0))) * K.epsilon())
+#         Ck1_ex = K.tf.expand_dims(Ck1, -1)
+#         return K.tf.concat([a, Ck1_ex], -1)
+#
+#
+#     def compute_output_shape(self, input_shapes):
+#         toReturn = [(input_shapes[0] + (None,))]
+#         return toReturn
+
+class Reduce_Sum(keras.layers.Layer):
+
+    def __init__(self, axis=-1, keepdims=False, **kwargs):
+        self.axis = axis
+        self.keepdims = keepdims
+        super(Reduce_Sum, self).__init__(**kwargs)
+
+    def call(self, x):
+        return tf.reduce_sum(x, self.axis, self.keepdims)
+
+    def compute_output_shape(self, input_shape):
+        if self.axis is None:
+            if self.keepdims is False:
+                return (1,)
+            else:
+                return tuple(np.ones_like(input_shape))
+        else:
+            axes = np.arange(len(input_shape))
+            if self.keepdims is False:
+                for i in iutils.to_list(self.axis):
+                    axes = np.delete(axes, i, 0)
+            else:
+                for i in iutils.to_list(self.axis):
+                    axes[i] = 1
+            return tuple([idx
+                          for i, idx in enumerate(input_shape)
+                          if i in axes])
+
+
+class Ones_Matrix(keras.layers.Layer):
+
+    def __init__(self,  **kwargs):
+        super(Ones_Matrix, self).__init__(**kwargs)
+
+    def call(self, x):
+        ones_like_x = tf.expand_dims(tf.ones_like(x[0]), -1)
+        ones_last_dim = tf.ones([1, x[0].shape[-1]], tf.float32)
+        return ones_last_dim * ones_like_x
+
+    def compute_output_shape(self, input_shape):
+        return input_shape + (input_shape[-1], )
+
+
 ###############################################################################
 ###############################################################################
 ###############################################################################
@@ -578,9 +798,6 @@ class SafeDivide(keras.layers.Layer):
 
     def compute_output_shape(self, input_shapes):
         return input_shapes[0]
-
-
-
 
 
 ###############################################################################

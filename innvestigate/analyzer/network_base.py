@@ -48,6 +48,7 @@ class AnalyzerNetworkBase(AnalyzerBase):
         )
 
         self._special_helper_layers = []
+        self._reversed_tensors = []
 
         super(AnalyzerNetworkBase, self).__init__(model, **kwargs)
 
@@ -96,14 +97,14 @@ class AnalyzerNetworkBase(AnalyzerBase):
             stop_analysis_at_tensors.append(neuron_indexing)
 
             l = ilayers.GatherND(name="iNNvestigate_gather_nd")
-            model_output = l(model_output+[neuron_indexing])
+            model_output = l(model_output + [neuron_indexing])
             self._special_helper_layers.append(l)
         elif neuron_selection_mode == "all":
             pass
         else:
             raise NotImplementedError()
 
-        model = keras.models.Model(inputs=model_inputs+analysis_inputs,
+        model = keras.models.Model(inputs=model_inputs + analysis_inputs,
                                    outputs=model_output)
         return model, analysis_inputs, stop_analysis_at_tensors
 
@@ -144,36 +145,36 @@ class AnalyzerNetworkBase(AnalyzerBase):
         self._n_data_output = len(analysis_outputs)
         self._n_debug_output = len(debug_outputs)
         self._analyzer_model = keras.models.Model(
-            inputs=model_inputs+analysis_inputs+constant_inputs,
-            outputs=analysis_outputs+debug_outputs)
+            inputs=model_inputs + analysis_inputs + constant_inputs,
+            outputs=analysis_outputs + debug_outputs)
 
-
-    def create_analyzer_forward_model(self, relevance_clusters):
+    def create_forward_analyzer_model(self, tensors_Xs):
         """
-        Creates the analyze functionality. If not called beforehand
-        it will be called by :func:`analyze`.
-        """
+            Creates the analyze functionality. If not called beforehand
+            it will be called by :func:`analyze`.
+            """
         model_inputs = self._model.inputs
         tmp = self._prepare_model(self._model)
         model, analysis_inputs, stop_analysis_at_tensors = tmp
         self._analysis_inputs = analysis_inputs
         self._prepared_model = model
-        relevances = []
-        self._handle_propagation(model, relevance_clusters)
-        # if isinstance(tmp, tuple):
-        #     if len(tmp) == 3:
-        #         analysis_outputs, debug_outputs, constant_inputs = tmp
-        #     elif len(tmp) == 2:
-        #         analysis_outputs, debug_outputs = tmp
-        #         constant_inputs = list()
-        #     elif len(tmp) == 1:
-        #         analysis_outputs = iutils.to_list(tmp[0])
-        #         constant_inputs, debug_outputs = list(), list()
-        #     else:
-        #         raise Exception("Unexpected output from _create_analysis.")
-        # else:
-        analysis_outputs = relevances
-        constant_inputs, debug_outputs = list(), list()
+
+        tmp = self._pendulum(
+            model, stop_analysis_at_tensors=stop_analysis_at_tensors, tensors_Xs=tensors_Xs)
+        if isinstance(tmp, tuple):
+            if len(tmp) == 3:
+                analysis_outputs, debug_outputs, constant_inputs = tmp
+            elif len(tmp) == 2:
+                analysis_outputs, debug_outputs = tmp
+                constant_inputs = list()
+            elif len(tmp) == 1:
+                analysis_outputs = iutils.to_list(tmp[0])
+                constant_inputs, debug_outputs = list(), list()
+            else:
+                raise Exception("Unexpected output from _create_analysis.")
+        else:
+            analysis_outputs = tmp
+            constant_inputs, debug_outputs = list(), list()
 
         analysis_outputs = iutils.to_list(analysis_outputs)
         debug_outputs = iutils.to_list(debug_outputs)
@@ -183,7 +184,8 @@ class AnalyzerNetworkBase(AnalyzerBase):
         self._n_constant_input = len(constant_inputs)
         self._n_data_output = len(analysis_outputs)
         self._n_debug_output = len(debug_outputs)
-        self._analyzer_model = keras.models.Model(inputs=model_inputs + analysis_inputs + constant_inputs,
+        self._analyzer_model = keras.models.Model(
+            inputs=model_inputs + analysis_inputs + constant_inputs,
             outputs=analysis_outputs + debug_outputs)
 
     def _create_analysis(self, model, stop_analysis_at_tensors=[]):
@@ -212,7 +214,7 @@ class AnalyzerNetworkBase(AnalyzerBase):
     def _handle_debug_output(self, debug_values):
         raise NotImplementedError()
 
-    def _handle_propagation(self, model, debug_values):
+    def _pendulum(self, model, stop_analysis_at_tensors=[], tensors_Xs=[], heatmaps=[]):
         raise NotImplementedError()
 
     def analyze(self, X, neuron_selection=None):
@@ -227,12 +229,12 @@ class AnalyzerNetworkBase(AnalyzerBase):
 
         X = iutils.to_list(X)
 
-        if(neuron_selection is not None and
-           self._neuron_selection_mode != "index"):
+        if (neuron_selection is not None and
+                self._neuron_selection_mode != "index"):
             raise ValueError("Only neuron_selection_mode 'index' expects "
                              "the neuron_selection parameter.")
-        if(neuron_selection is None and
-           self._neuron_selection_mode == "index"):
+        if (neuron_selection is None and
+                self._neuron_selection_mode == "index"):
             raise ValueError("neuron_selection_mode 'index' expects "
                              "the neuron_selection parameter.")
 
@@ -246,24 +248,25 @@ class AnalyzerNetworkBase(AnalyzerBase):
                 (np.arange(len(neuron_selection)).reshape((-1, 1)),
                  neuron_selection.reshape((-1, 1)))
             )
-            ret = self._analyzer_model.predict_on_batch(X+[neuron_selection])
+            ret = self._analyzer_model.predict_on_batch(X + [neuron_selection])
         else:
 
             ret = self._analyzer_model.predict_on_batch(X)
 
         if self._n_debug_output > 0:
             self._handle_debug_output(ret[-self._n_debug_output:])
-            ret = ret[:-self._n_debug_output]
+            ret, = ret[:-self._n_debug_output]
+
+        tensors_Xs = self._reversed_tensors
 
         if isinstance(ret, list) and len(ret) == 1:
             ret = ret[0]
-        return ret
+        return ret, tensors_Xs
 
-    def propagate_forward(self, cluster):
-        ret = self.create_analyzer_forward_model(cluster)
-        #
-        # ret = self._analyzer_model.predict_on_batch(cluster)
-        return ret
+    def propagate_forward(self, tensors_Xs, x):
+        self.create_forward_analyzer_model(tensors_Xs)
+        output = self._analyzer_model.predict_on_batch(x)
+        return output
 
     def _get_state(self):
         state = super(AnalyzerNetworkBase, self)._get_state()
