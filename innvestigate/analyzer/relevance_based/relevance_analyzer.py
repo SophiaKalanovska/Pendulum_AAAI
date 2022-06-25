@@ -223,7 +223,7 @@ class BatchNormalizationReverseLayer(kgraph.ReverseMappingBase):
         # check if isinstance(self_rule, EpsiloneRule), then reroute
         # to BatchNormEpsilonRule. Not pretty, but should work.
 
-    def apply(self, Xs, Ys, Rs, reverse_state):
+    def apply(self, Xs, Ys, Rs, reverse_state, forward = False):
         ##print("    in BatchNormalizationReverseLayer.apply:", reverse_state['layer'].__class__.__name__, '(nid: {})'.format(reverse_state['nid']))
 
         input_shape = [K.int_shape(x) for x in Xs]
@@ -256,13 +256,22 @@ class BatchNormalizationReverseLayer(kgraph.ReverseMappingBase):
         else:
             y_minus_beta = Ys
 
-        numerator = [keras.layers.Multiply()([x, ymb, r])
-                     for x, ymb, r in zip(Xs, y_minus_beta, Rs)]
-        denominator = [keras.layers.Multiply()([xmm, y])
-                       for xmm, y in zip(x_minus_mu, Ys)]
 
-        return [ilayers.SafeDivide()([n, prepare_div(d)])
-                for n, d in zip(numerator, denominator)]
+        numerator = [keras.layers.Multiply()([x, ymb, r])
+                    for x, ymb, r in zip(Xs, y_minus_beta, Rs)]
+        denominator = [keras.layers.Multiply()([xmm, y])
+                    for xmm, y in zip(x_minus_mu, Ys)]
+
+        denominator_2 = [keras.layers.Multiply()([x, ymb])
+                    for x, ymb in zip(Xs, y_minus_beta)]
+        if forward:
+            tmp = [ilayers.SafeDivide()([n, prepare_div(d)])
+                                                            for n, d in zip(denominator, denominator_2)]
+            return [keras.layers.Multiply()([tmp, r])
+                    for tmp, r in zip(tmp, reverse_state["relevance_prime"])], reverse_state["percent"]
+        else:
+            return [ilayers.SafeDivide()([n, prepare_div(d)])
+                    for n, d in zip(numerator, denominator)]
 
 
 class AddReverseLayer(kgraph.ReverseMappingBase):
@@ -307,25 +316,27 @@ class AveragePoolingReverseLayer(kgraph.ReverseMappingBase):
         #TODO: implement rule support.
         #super(AveragePoolingRerseLayer, self).__init__(layer, state)
 
-    def apply(self, Xs, Ys, Rs, reverse_state):
+    def apply(self, Xs, Ys, Rs, reverse_state, forward = False):
         # the outputs of the pooling operation at each location is the sum of its inputs.
         # the forward message must be known in this case, and are the inputs for each pooling thing.
         # the gradient is 1 for each output-to-input connection, which corresponds to the "weights"
         # of the layer. It should thus be sufficient to reweight the relevances and and do a gradient_wrt
+        if forward:
+            return
+        else:
+            grad = ilayers.GradientWRT(len(Xs))
+            # Get activations.
+            Zs = kutils.apply(self._layer_wo_act, Xs)
+            # Divide incoming relevance by the activations.
+            tmp = [ilayers.SafeDivide()([a, b])
+                   for a, b in zip(Rs, Zs)]
 
-        grad = ilayers.GradientWRT(len(Xs))
-        # Get activations.
-        Zs = kutils.apply(self._layer_wo_act, Xs)
-        # Divide incoming relevance by the activations.
-        tmp = [ilayers.SafeDivide()([a, b])
-               for a, b in zip(Rs, Zs)]
-
-        # Propagate the relevance to input neurons
-        # using the gradient.
-        tmp = iutils.to_list(grad(Xs+Zs+tmp))
-        # Re-weight relevance with the input values.
-        return [keras.layers.Multiply()([a, b])
-                for a, b in zip(Xs, tmp)]
+            # Propagate the relevance to input neurons
+            # using the gradient.
+            tmp = iutils.to_list(grad(Xs+Zs+tmp))
+            # Re-weight relevance with the input values.
+            return [keras.layers.Multiply()([a, b])
+                    for a, b in zip(Xs, tmp)]
 
 
 class LRP(ReverseAnalyzerBase):
@@ -473,28 +484,50 @@ class LRP(ReverseAnalyzerBase):
         return super(LRP, self)._create_analysis(*args, **kwargs)
 
 
-    def _default_reverse_mapping(self, Xs, Ys, reversed_Ys, reverse_state):
+    def _default_reverse_mapping(self, Xs, Ys, reversed_Ys, reverse_state, forward = False):
         ##print("    in _default_reverse_mapping:", reverse_state['layer'].__class__.__name__, '(nid: {})'.format(reverse_state['nid']),  end='->')
         #default_return_layers = [keras.layers.Activation]# TODO extend
-        if(len(Xs) == len(Ys) and
-           isinstance(reverse_state['layer'], (keras.layers.Activation,)) and
-           all([K.int_shape(x) == K.int_shape(y) for x, y in zip(Xs, Ys)])):
-            # Expect Xs and Ys to have the same shapes.
-            # There is not mixing of relevances as there is kernel,
-            # therefore we pass them as they are.
-            ##print('return R')
-            return reversed_Ys
+        if forward:
+            if (len(Xs) == len(Ys) and
+                    isinstance(reverse_state['layer'], (keras.layers.Activation,)) and
+                    all([K.int_shape(x) == K.int_shape(y) for x, y in zip(Xs, Ys)])):
+                # Expect Xs and Ys to have the same shapes.
+                # There is not mixing of relevances as there is kernel,
+                # therefore we pass them as they are.
+                ##print('return R')
+                return reverse_state["relevance_prime"], reverse_state["percent"]
+            else:
+                # This branch covers:
+                # MaxPooling
+                # Max
+                # Flatten
+                # Reshape
+                # Concatenate
+                # Cropping
+                ##print('ilayers.GradientWRT')
+                return self._gradient_reverse_mapping(
+                    Xs, Ys, reversed_Ys, reverse_state, True)
+
         else:
-            # This branch covers:
-            # MaxPooling
-            # Max
-            # Flatten
-            # Reshape
-            # Concatenate
-            # Cropping
-            ##print('ilayers.GradientWRT')
-            return self._gradient_reverse_mapping(
-                Xs, Ys, reversed_Ys, reverse_state)
+            if(len(Xs) == len(Ys) and
+               isinstance(reverse_state['layer'], (keras.layers.Activation,)) and
+               all([K.int_shape(x) == K.int_shape(y) for x, y in zip(Xs, Ys)])):
+                # Expect Xs and Ys to have the same shapes.
+                # There is not mixing of relevances as there is kernel,
+                # therefore we pass them as they are.
+                ##print('return R')
+                return reversed_Ys
+            else:
+                # This branch covers:
+                # MaxPooling
+                # Max
+                # Flatten
+                # Reshape
+                # Concatenate
+                # Cropping
+                ##print('ilayers.GradientWRT')
+                return self._gradient_reverse_mapping(
+                    Xs, Ys, reversed_Ys, reverse_state)
 
     ########################################
     ### End of Rule Selection Business. ####

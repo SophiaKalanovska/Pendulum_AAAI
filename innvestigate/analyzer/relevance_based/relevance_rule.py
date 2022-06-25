@@ -317,27 +317,37 @@ class AlphaBetaRule(kgraph.ReverseMappingBase):
         times_beta = keras.layers.Lambda(lambda x: x * self._beta)
         keep_positives = keras.layers.Lambda(lambda x: x * K.cast(K.greater(x, 0), K.floatx()))
         keep_negatives = keras.layers.Lambda(lambda x: x * K.cast(K.less(x, 0), K.floatx()))
+        prepare_div = keras.layers.Lambda(
+            lambda x: x + (K.cast(K.greater_equal(x, 0), K.floatx()) * 2 - 1) * K.epsilon())
 
-        def f(layer1, layer2, X1, X2):
-            # Get activations of full positive or negative part.
+        def f(layer1, layer2, X1, X2, Rs, reverse_state):
+            # # Get activations of full positive or negative part.
             Z1 = kutils.apply(layer1, X1)
             Z2 = kutils.apply(layer2, X2)
             Zs = [keras.layers.Add()([a, b])
                   for a, b in zip(Z1, Z2)]
-            # Divide incoming relevance by the activations.
-            Sk = [ilayers.SafeDivide()([a, b])
-                  for a, b in zip(Rs, Zs)]
 
-            Rjk_1 = iutils.to_list(percent_matrix(X1 + Z1 + Sk + reverse_state['relevance']))
-            Rjk_2 = iutils.to_list(percent_matrix(X2 + Z2 + Sk + reverse_state['relevance']))
-            #
-            Rk_1 = [keras.layers.Multiply()([a, b])
-                    for a, b in zip(X1, Rjk_1)]
-            Rk_2 = [keras.layers.Multiply()([a, b])
-                    for a, b in zip(X2, Rjk_2)]
+            X1_prime = [keras.layers.Multiply()([a, b])
+             for a, b in zip(X1, reverse_state["percent"])]
 
-            # return [keras.layers.Add()([a, b])
-            #         for a, b in zip(Rj_1, Rj_2)]
+            X2_prime = [keras.layers.Multiply()([a, b])
+                        for a, b in zip(X2, reverse_state["percent"])]
+
+            Z1_prime = kutils.apply(layer1, X1_prime)
+            Z2_prime = kutils.apply(layer2, X2_prime)
+            Zs_prime = [keras.layers.Add()([a, b])
+                  for a, b in zip(Z1_prime, Z2_prime)]
+
+            percent = [ilayers.SafeDivide()([n, prepare_div(d)])
+             for n, d in zip(Zs_prime, Zs)]
+
+            R_prime = [keras.layers.Multiply()([a, b])
+             for a, b in zip(Rs, percent)]
+
+            return R_prime, percent
+
+
+
 
         # Distinguish postive and negative inputs.
         Xs_pos = kutils.apply(keep_positives, Xs)
@@ -345,13 +355,13 @@ class AlphaBetaRule(kgraph.ReverseMappingBase):
         # xpos*wpos + xneg*wneg
         activator_relevances = f(self._layer_wo_act_positive,
                                  self._layer_wo_act_negative,
-                                 Xs_pos, Xs_neg)
+                                 Xs_pos, Xs_neg, Rs, reverse_state)
 
         if self._beta:  # only compute beta-weighted contributions of beta is not zero
             # xpos*wneg + xneg*wpos
             inhibitor_relevances = f(self._layer_wo_act_negative,
                                      self._layer_wo_act_positive,
-                                     Xs_pos, Xs_neg)
+                                     Xs_pos, Xs_neg, Rs, reverse_state)
             return [keras.layers.Subtract()([times_alpha(a), times_beta(b)])
                     for a, b in zip(activator_relevances, inhibitor_relevances)]
         else:

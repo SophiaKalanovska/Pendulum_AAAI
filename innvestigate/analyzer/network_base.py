@@ -148,7 +148,7 @@ class AnalyzerNetworkBase(AnalyzerBase):
             inputs=model_inputs + analysis_inputs + constant_inputs,
             outputs=analysis_outputs + debug_outputs)
 
-    def create_forward_analyzer_model(self, tensors_Xs):
+    def create_forward_analyzer_model(self, mask):
         """
             Creates the analyze functionality. If not called beforehand
             it will be called by :func:`analyze`.
@@ -160,7 +160,7 @@ class AnalyzerNetworkBase(AnalyzerBase):
         self._prepared_model = model
 
         tmp = self._pendulum(
-            model, stop_analysis_at_tensors=stop_analysis_at_tensors, tensors_Xs=tensors_Xs)
+            model, stop_analysis_at_tensors=stop_analysis_at_tensors, mask=mask)
         if isinstance(tmp, tuple):
             if len(tmp) == 3:
                 analysis_outputs, debug_outputs, constant_inputs = tmp
@@ -214,7 +214,7 @@ class AnalyzerNetworkBase(AnalyzerBase):
     def _handle_debug_output(self, debug_values):
         raise NotImplementedError()
 
-    def _pendulum(self, model, stop_analysis_at_tensors=[], tensors_Xs=[], heatmaps=[]):
+    def _pendulum(self, model, stop_analysis_at_tensors=[], mask=[]):
         raise NotImplementedError()
 
     def analyze(self, X, neuron_selection=None):
@@ -263,9 +263,9 @@ class AnalyzerNetworkBase(AnalyzerBase):
             ret = ret[0]
         return ret, tensors_Xs
 
-    def propagate_forward(self, tensors_Xs, x):
-        self.create_forward_analyzer_model(tensors_Xs)
-        output = self._analyzer_model.predict_on_batch(x)
+    def propagate_forward(self, X, mask):
+        self.create_forward_analyzer_model(mask)
+        output = self._analyzer_model.predict_on_batch(X)
         return output
 
     def _get_state(self):

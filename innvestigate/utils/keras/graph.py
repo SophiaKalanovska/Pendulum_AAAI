@@ -1152,11 +1152,61 @@ def forward_model(model, reverse_mappings,
                   project_bottleneck_tensors=False,
                   execution_trace=None,
                   reapply_on_copied_layers=False,
-                  back_pass = []):
+                  mask = []):
 
     if head_mapping is None:
         def head_mapping(X):
             return X
+
+    percent_tensors = {}
+
+    def add_percent_tensors(nid,
+                             tensors_list,
+                             reversed_tensors_list):
+
+        def add_reversed_tensor(i, X, reversed_X):
+            # Do not keep tensors that should stop the mapping.
+            if X in stop_mapping_at_tensors:
+                return
+
+            if X not in percent_tensors:
+                percent_tensors[X] = {"id": (nid, i, reversed_X),
+                                       "tensor": reversed_X}
+            else:
+                tmp = percent_tensors[X]
+                if "tensor" in tmp and "tensors" in tmp:
+                    raise Exception("Wrong order, tensors already aggregated!")
+                if "tensor" in tmp:
+                    tmp["tensors"] = [tmp["tensor"], reversed_X]
+                    del tmp["tensor"]
+                else:
+                    tmp["tensors"].append(reversed_X)
+
+        tmp = zip(tensors_list, reversed_tensors_list)
+        for i, (X, reversed_X) in enumerate(tmp):
+            add_reversed_tensor(i, X, reversed_X)
+
+    def get_percent_tensors(tensor):
+        tmp = percent_tensors[tensor]
+
+        if "final_tensor" not in tmp:
+            if "tensor" not in tmp:
+                final_tensor = keras.layers.Add()(tmp["tensors"])
+            else:
+                final_tensor = tmp["tensor"]
+
+            if project_bottleneck_tensors is not False:
+                if tensor in bottleneck_tensors:
+                    project = ilayers.Project(project_bottleneck_tensors)
+                    final_tensor = project(final_tensor)
+
+            if clip_all_reversed_tensors is not False:
+                clip = ilayers.Clip(*clip_all_reversed_tensors)
+                final_tensor = clip(final_tensor)
+
+            tmp["final_tensor"] = final_tensor
+
+        return tmp["final_tensor"]
 
     forward_tensors = {}
     bottleneck_tensors = set()
@@ -1300,11 +1350,14 @@ def forward_model(model, reverse_mappings,
 
     reverse_mapping = initialized_forward_mappings[layer]
     # Follow the list and revert the graph.
-    n = -1
     # heatmap = heatmaps[0]
-    elements = len(back_pass)
+    # elements = len(back_pass)
+    p = tf.constant(mask)
+    add_percent_tensors(-1,
+                        [head_mapping(tmp) for tmp in inputs],
+                        [p])
+
     for _nid, (layer, Xs, Ys) in enumerate(execution_list):
-        n += 1
         if isinstance(layer, keras.layers.InputLayer):
             # Special case. Do nothing.
             pass
@@ -1322,6 +1375,9 @@ def forward_model(model, reverse_mappings,
             forward_Xs = [get_forward_tensors(xs)
                            for xs in Xs]
 
+            percent_relevance = [get_percent_tensors(xs)
+                          for xs in Xs]
+
             reversed_Ys = [get_reversed_tensor(ys)
                            for ys in Ys]
 
@@ -1329,11 +1385,9 @@ def forward_model(model, reverse_mappings,
                                              if y in stop_mapping_at_tensors]
 
             reverse_mapping = initialized_forward_mappings[layer]
-            relev_Xs = [back_pass[n + x][1] for x in range(len(Xs))]
             p_Xs = [get_reversed_tensor(xs)
                            for xs in Xs]
             # p_Ys = [back_pass[elements -n -x -1][1]for x in range(len(Xs))]
-            n += len(Xs) - 1
             # forward_Ys = ilayers.GradientWRT(len(Ys))(Ys+v_Xs+forward_Xs)
             # forward_Ys = ilayers.GradientWRT(Ys+[values_for_Xs[_nid][0][2]]+forward_Xs)
 
@@ -1345,14 +1399,22 @@ def forward_model(model, reverse_mappings,
                     "layer": layer,
                     "stop_mapping_at_tensors": local_stop_mapping_at_tensors,
                     "p_Xs": p_Xs,
-                    "relev_Xs": relev_Xs,
-                    "relevance": forward_Xs
+                    "relevance_prime": forward_Xs,
+                    "percent": percent_relevance,
 
                 }, True)
-            print("hey")
-            forward_Ys = iutils.to_list(forward_Ys)
 
-            add_forward_tensors(_nid, Ys, forward_Ys)
+
+            if isinstance(forward_Ys, tuple):
+                forward_RYs = forward_Ys[0]
+                percent_ys = forward_Ys[1]
+            else:
+                pass
+            forward_RYs = iutils.to_list(forward_RYs)
+
+            add_forward_tensors(_nid, Ys, forward_RYs)
+            add_percent_tensors(_nid, Ys, percent_ys)
+
 
     # Return requested values #################################################
     forward_output_tensors = [get_forward_tensors(tmp)

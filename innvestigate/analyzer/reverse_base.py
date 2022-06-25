@@ -3,6 +3,7 @@ import six
 
 import tensorflow as tf
 from innvestigate import layers as ilayers, utils as iutils
+import innvestigate.utils.keras as kutils
 from innvestigate.analyzer.network_base import AnalyzerNetworkBase
 from innvestigate.utils.keras import graph as kgraph
 
@@ -74,9 +75,27 @@ class ReverseAnalyzerBase(AnalyzerNetworkBase):
             reverse_reapply_on_copied_layers)
         super(ReverseAnalyzerBase, self).__init__(model, **kwargs)
 
-    def _gradient_reverse_mapping(self, Xs, Ys, reversed_Ys, reverse_state):
-        mask = [x not in reverse_state["stop_mapping_at_tensors"] for x in Xs]
-        return ilayers.GradientWRT(len(Xs), mask=mask)(Xs + Ys + reversed_Ys)
+    def _gradient_reverse_mapping(self, Xs, Ys, reversed_Ys, reverse_state, forward = False):
+        prepare_div = tf.keras.layers.Lambda(
+            lambda x: x + (K.cast(K.greater_equal(x, 0), K.floatx()) * 2 - 1) * K.epsilon())
+        if forward:
+            Zs = kutils.apply(reverse_state['layer'], Xs)
+
+            X_prime = [tf.keras.layers.Multiply()([a, b])
+                       for a, b in zip(Xs, reverse_state["percent"])]
+
+            Zs_prime = kutils.apply(reverse_state['layer'], X_prime)
+
+            percent = [ilayers.SafeDivide()([n, prepare_div(d)])
+                       for n, d in zip(Zs_prime, Zs)]
+
+            R_prime = [tf.keras.layers.Multiply()([a, b])
+                       for a, b in zip(reversed_Ys, percent)]
+
+            return R_prime, percent
+        else:
+            mask = [x not in reverse_state["stop_mapping_at_tensors"] for x in Xs]
+            return ilayers.GradientWRT(len(Xs), mask=mask)(Xs + Ys + reversed_Ys)
 
     def _reverse_mapping(self, layer):
         """
@@ -185,7 +204,7 @@ class ReverseAnalyzerBase(AnalyzerNetworkBase):
                        model,
                        stop_analysis_at_tensors=[],
                        return_all_reversed_tensors=True,
-                       values_for_Xs= []):
+                       mask= []):
         return kgraph.forward_model(
             model,
             reverse_mappings=self._reverse_mapping,
@@ -196,7 +215,7 @@ class ReverseAnalyzerBase(AnalyzerNetworkBase):
             clip_all_reversed_tensors=self._reverse_clip_values,
             project_bottleneck_tensors=self._reverse_project_bottleneck_layers,
             return_all_reversed_tensors=return_all_reversed_tensors,
-            back_pass=values_for_Xs)
+            mask=mask)
 
     def _create_analysis(self, model, stop_analysis_at_tensors=[]):
         return_all_reversed_tensors = (
@@ -308,12 +327,12 @@ class ReverseAnalyzerBase(AnalyzerNetworkBase):
             project_bottleneck_tensors=self._reverse_project_bottleneck_layers,
             return_all_reversed_tensors=return_all_reversed_tensors)
 
-    def _pendulum(self, model, stop_analysis_at_tensors=[], tensors_Xs =[]):
+    def _pendulum(self, model, stop_analysis_at_tensors=[], mask =[]):
         ret = self._forward_model(
             model,
             stop_analysis_at_tensors=[],
             return_all_reversed_tensors=True,
-            values_for_Xs=tensors_Xs
+            mask=mask
         )
         return ret
 

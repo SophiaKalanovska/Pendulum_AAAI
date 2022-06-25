@@ -79,11 +79,11 @@ if __name__ == "__main__":
     # Create masks for each cluster found on the level with highest activation
     masks = two_dimensional_clusters.DbSCAN_for_activations(categories, image_size)
 
-    heatmaps = mask_to_relevance.mask_to_input_relevance_of_mask(masks, a, image_name)
+    # heatmaps = mask_to_relevance.mask_to_input_relevance_of_mask(masks, a, image_name)
 
     # forward_analyzer = innvestigate.create_analyzer("lrp.alpha_1_beta_0", model)
-    relevances = []
-    for heatmap in heatmaps:
-        relevances.append(analyzer.propagate_forward(tensors_Xs, heatmap))
+    masks_relevances = []
+    for mask in masks:
+        masks_relevances.append(analyzer.propagate_forward(x, mask))
 
 
