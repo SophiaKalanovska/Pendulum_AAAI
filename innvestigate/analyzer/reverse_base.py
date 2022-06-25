@@ -2,6 +2,7 @@ import numpy as np
 import six
 
 import tensorflow as tf
+import tensorflow.keras.backend as K
 from innvestigate import layers as ilayers, utils as iutils
 import innvestigate.utils.keras as kutils
 from innvestigate.analyzer.network_base import AnalyzerNetworkBase
@@ -89,10 +90,16 @@ class ReverseAnalyzerBase(AnalyzerNetworkBase):
             percent = [ilayers.SafeDivide()([n, prepare_div(d)])
                        for n, d in zip(Zs_prime, Zs)]
 
+
             R_prime = [tf.keras.layers.Multiply()([a, b])
                        for a, b in zip(reversed_Ys, percent)]
-
-            return R_prime, percent
+            if reverse_state["last"]:
+                percent = [tf.expand_dims(percent[0], 0)]
+                R_prime = [tf.keras.layers.Multiply()([a, b])
+                           for a, b in zip(reversed_Ys, percent)]
+                return R_prime
+            else:
+                return R_prime, percent
         else:
             mask = [x not in reverse_state["stop_mapping_at_tensors"] for x in Xs]
             return ilayers.GradientWRT(len(Xs), mask=mask)(Xs + Ys + reversed_Ys)

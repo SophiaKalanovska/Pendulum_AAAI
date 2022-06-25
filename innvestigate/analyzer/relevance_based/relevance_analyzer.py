@@ -316,13 +316,30 @@ class AveragePoolingReverseLayer(kgraph.ReverseMappingBase):
         #TODO: implement rule support.
         #super(AveragePoolingRerseLayer, self).__init__(layer, state)
 
+
     def apply(self, Xs, Ys, Rs, reverse_state, forward = False):
         # the outputs of the pooling operation at each location is the sum of its inputs.
         # the forward message must be known in this case, and are the inputs for each pooling thing.
         # the gradient is 1 for each output-to-input connection, which corresponds to the "weights"
         # of the layer. It should thus be sufficient to reweight the relevances and and do a gradient_wrt
         if forward:
-            return
+            prepare_div = keras.layers.Lambda(
+                lambda x: x + (K.cast(K.greater_equal(x, 0), K.floatx()) * 2 - 1) * K.epsilon())
+            Zs = kutils.apply(self._layer_wo_act, Xs)
+
+            Xs_prime = [keras.layers.Multiply()([a, b])
+                        for a, b in zip(Xs, reverse_state["percent"])]
+
+            Zs_prime = kutils.apply(self._layer_wo_act, Xs_prime)
+
+
+            percent = [ilayers.SafeDivide()([n, prepare_div(d)])
+                       for n, d in zip(Zs_prime, Zs)]
+
+            R_prime = [keras.layers.Multiply()([a, b])
+                       for a, b in zip(Rs, percent)]
+
+            return R_prime, percent
         else:
             grad = ilayers.GradientWRT(len(Xs))
             # Get activations.
