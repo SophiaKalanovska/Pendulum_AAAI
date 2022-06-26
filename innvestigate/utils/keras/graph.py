@@ -1013,7 +1013,7 @@ def reverse_model(model, reverse_mappings,
             model,
             reapply_on_copied_layers=reapply_on_copied_layers)
     layers, execution_list, outputs, inputs = execution_trace
-    ex_list.append([layers, execution_list, outputs, inputs])
+    ex_list.append([copy.copy(layers), copy.copy(execution_list), copy.copy(outputs), copy.copy(inputs)])
     len_execution_list = len(execution_list)
     num_input_layers = len([_ for l, _, _ in execution_list
                             if isinstance(l, keras.layers.InputLayer)])
@@ -1362,6 +1362,7 @@ def forward_model(model, reverse_mappings,
 
     for _nid, (layer, Xs, Ys) in enumerate(execution_list):
         if isinstance(layer, keras.layers.InputLayer):
+            [get_forward_tensors(xs) for xs in Xs]
             # Special case. Do nothing.
             pass
         elif kchecks.is_network(layer):
@@ -1416,8 +1417,9 @@ def forward_model(model, reverse_mappings,
                 forward_RYs = forward_Ys[0]
                 percent_ys = forward_Ys[1]
             else:
-                forward_RYs = iutils.to_list(forward_RYs)
+                forward_RYs = iutils.to_list(forward_Ys)
                 add_forward_tensors(_nid, Ys, forward_RYs)
+                # continue
                 pass
 
             forward_RYs = iutils.to_list(forward_RYs)

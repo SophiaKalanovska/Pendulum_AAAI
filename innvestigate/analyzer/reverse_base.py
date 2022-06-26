@@ -210,8 +210,8 @@ class ReverseAnalyzerBase(AnalyzerNetworkBase):
     def _forward_model(self,
                        model,
                        stop_analysis_at_tensors=[],
-                       return_all_reversed_tensors=True,
-                       mask= []):
+                       return_all_reversed_tensors=False,
+                       mask=[]):
         return kgraph.forward_model(
             model,
             reverse_mappings=self._reverse_mapping,
@@ -334,13 +334,59 @@ class ReverseAnalyzerBase(AnalyzerNetworkBase):
             project_bottleneck_tensors=self._reverse_project_bottleneck_layers,
             return_all_reversed_tensors=return_all_reversed_tensors)
 
-    def _pendulum(self, model, stop_analysis_at_tensors=[], mask =[]):
+    def _pendulum(self, model, stop_analysis_at_tensors=[], mask =[], return_all_reversed_tensors=True):
         ret = self._forward_model(
             model,
             stop_analysis_at_tensors=[],
             return_all_reversed_tensors=True,
             mask=mask
         )
+
+        if return_all_reversed_tensors:
+            ret = (self._postprocess_analysis(ret[0]), ret[1])
+            # self._reversed_tensors = ret[1]
+            # ret = ret[0]
+        else:
+            ret = self._postprocess_analysis(ret)
+            #
+            # return_all_reversed_tensors = False
+        if return_all_reversed_tensors:
+            debug_tensors = []
+            self._debug_tensors_indices = {}
+
+            values_grad = list(six.itervalues(ret[1]))
+            mapping = {i: v["id"] for i, v in enumerate(values_grad)}
+            self.tensors = [v["final_tensor"] for v in values_grad]
+            self._reverse_tensors_mapping = mapping
+            # tensors = ret[1]
+
+            if self._reverse_check_min_max_values:
+                tmp = [ilayers.Min(None)(x) for x in self.tensors]
+                self._debug_tensors_indices["min"] = (
+                    len(debug_tensors),
+                    len(debug_tensors) + len(tmp))
+                debug_tensors += tmp
+
+                tmp = [ilayers.Max(None)(x) for x in self.tensors]
+                self._debug_tensors_indices["max"] = (
+                    len(debug_tensors),
+                    len(debug_tensors) + len(tmp))
+                debug_tensors += tmp
+
+            if self._reverse_check_finite:
+                tmp = iutils.to_list(ilayers.FiniteCheck()(self.tensors))
+                self._debug_tensors_indices["finite"] = (
+                    len(debug_tensors),
+                    len(debug_tensors) + len(tmp))
+                debug_tensors += tmp
+
+            if self._reverse_keep_tensors:
+                self._debug_tensors_indices["keep"] = (
+                    len(debug_tensors),
+                    len(debug_tensors) + len(self.tensors))
+                debug_tensors += self.tensors
+
+            ret = (ret[0], debug_tensors)
         return ret
 
     def _get_state(self):

@@ -263,10 +263,43 @@ class AnalyzerNetworkBase(AnalyzerBase):
             ret = ret[0]
         return ret, tensors_Xs
 
-    def propagate_forward(self, X, mask):
+    def propagate_forward(self, X, mask, neuron_selection=None):
         self.create_forward_analyzer_model(mask)
-        output = self._analyzer_model.predict_on_batch(X)
-        return output
+        X = iutils.to_list(X)
+
+        if (neuron_selection is not None and
+                self._neuron_selection_mode != "index"):
+            raise ValueError("Only neuron_selection_mode 'index' expects "
+                             "the neuron_selection parameter.")
+        if (neuron_selection is None and
+                self._neuron_selection_mode == "index"):
+            raise ValueError("neuron_selection_mode 'index' expects "
+                             "the neuron_selection parameter.")
+
+        if self._neuron_selection_mode == "index":
+            neuron_selection = np.asarray(neuron_selection).flatten()
+            if neuron_selection.size == 1:
+                neuron_selection = np.repeat(neuron_selection, len(X[0]))
+
+            # Add first axis indices for gather_nd
+            neuron_selection = np.hstack(
+                (np.arange(len(neuron_selection)).reshape((-1, 1)),
+                 neuron_selection.reshape((-1, 1)))
+            )
+            ret = self._analyzer_model.predict_on_batch(X + [neuron_selection])
+        else:
+
+            ret = self._analyzer_model.predict_on_batch(X)
+
+        if self._n_debug_output > 0:
+            self._handle_debug_output(ret[-self._n_debug_output:])
+            ret, = ret[:-self._n_debug_output]
+
+        tensors_Xs = self._reversed_tensors
+
+        if isinstance(ret, list) and len(ret) == 1:
+            ret = ret[0]
+        return ret
 
     def _get_state(self):
         state = super(AnalyzerNetworkBase, self)._get_state()

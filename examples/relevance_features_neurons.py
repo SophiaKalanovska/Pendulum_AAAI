@@ -54,7 +54,8 @@ if __name__ == "__main__":
     # Add batch axis and preprocess
     x = preprocess(image[None])
 
-    predictions = inception.decode_predictions(model.predict_on_batch(x))
+    pr = model.predict_on_batch(x)
+    predictions = inception.decode_predictions(pr)
     print(predictions)
     # distribute the relevance to the input layer
     start_time = time.time()
@@ -81,9 +82,10 @@ if __name__ == "__main__":
 
     # heatmaps = mask_to_relevance.mask_to_input_relevance_of_mask(masks, a, image_name)
 
-    # forward_analyzer = innvestigate.create_analyzer("lrp.alpha_1_beta_0", model)
+    forward_analyzer = innvestigate.create_analyzer("lrp.alpha_1_beta_0", model)
     masks_relevances = []
     for mask in masks:
         masks_relevances.append(analyzer.propagate_forward(x, mask))
+    print(masks_relevances)
 
 
