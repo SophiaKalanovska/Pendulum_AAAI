@@ -7,7 +7,7 @@ from builtins import zip
 ###############################################################################
 ###############################################################################
 ###############################################################################
-
+import random
 import tensorflow.keras as keras
 import tensorflow.keras.backend as K
 # # import keras.engine.topology
@@ -248,12 +248,12 @@ class AlphaBetaRule(kgraph.ReverseMappingBase):
             layer,
             keep_bias=bias,
             weights=positive_weights,
-            name_template="reversed_kernel_positive_%s")
+            name_template="reversed_kernel_positive_%s" + str(random.randint(0, 10000000)))
         self._layer_wo_act_negative = kgraph.copy_layer_wo_activation(
             layer,
             keep_bias=bias,
             weights=negative_weights,
-            name_template="reversed_kernel_negative_%s")
+            name_template="reversed_kernel_negative_%s" + str(random.randint(0, 10000000)))
 
     def apply(self, Xs, Ys, Rs, reverse_state, forward=False):
         # this method is correct, but wasteful

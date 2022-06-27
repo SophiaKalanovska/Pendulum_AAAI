@@ -1147,7 +1147,9 @@ def reverse_model(model, reverse_mappings,
 
 
 
-def forward_model(model, reverse_mappings,
+def forward_model(model,
+                  the_label_index,
+                  reverse_mappings,
                   default_reverse_mapping=None,
                   head_mapping=None,
                   stop_mapping_at_tensors=[],
@@ -1220,7 +1222,7 @@ def forward_model(model, reverse_mappings,
                              tensors_list,
                              reversed_tensors_list):
 
-        def add_reversed_tensor(i, X, reversed_X):
+        def add_forward_tensors(i, X, reversed_X):
             # Do not keep tensors that should stop the mapping.
             if X in stop_mapping_at_tensors:
                 return
@@ -1240,7 +1242,7 @@ def forward_model(model, reverse_mappings,
 
         tmp = zip(tensors_list, reversed_tensors_list)
         for i, (X, reversed_X) in enumerate(tmp):
-            add_reversed_tensor(i, X, reversed_X)
+            add_forward_tensors(i, X, reversed_X)
 
     def get_forward_tensors(tensor):
         tmp = forward_tensors[tensor]
@@ -1264,6 +1266,7 @@ def forward_model(model, reverse_mappings,
 
         return tmp["final_tensor"]
 
+
     def get_reversed_tensor(tensor):
         tmp = reversed_tensors[tensor]
 
@@ -1286,13 +1289,16 @@ def forward_model(model, reverse_mappings,
 
         return tmp["final_tensor"]
 
-    # Reverse the model #######################################################
-    # _print("Reverse model: {}".format(model))
-    # if execution_trace is None:
-    #     execution_trace = trace_model_execution(
-    #         model,
-    #         reapply_on_copied_layers=reapply_on_copied_layers)
+    if execution_trace is None:
+        execution_trace = trace_model_execution(
+            model,
+            reapply_on_copied_layers=reapply_on_copied_layers)
     layers, execution_list, outputs, inputs = ex_list[0]
+    # len_execution_list = len(execution_list)
+    # num_input_layers = len([_ for l, _, _ in execution_list
+    #                         if isinstance(l, keras.layers.InputLayer)])
+    # len_execution_list_wo_inputs_layers = len_execution_list - num_input_layers
+    # reverse_execution_list = reversed(execution_list)
 
     initialized_forward_mappings = {}
     for layer in layers:
@@ -1347,18 +1353,21 @@ def forward_model(model, reverse_mappings,
         initialized_forward_mappings[layer] = reverse_mapping
 
     # Initialize the reverse tensor mappings.
-
+    # p = [tf.constant(mask)]
+    p = [tf.ones_like(inputs[0])]
+    relevance_input = [tf.keras.layers.Multiply()([a, b])
+                           for a, b in zip(inputs, p)]
     add_forward_tensors(-1,
                          [head_mapping(tmp) for tmp in inputs],
-                         inputs)
+                         relevance_input)
 
     # Follow the list and revert the graph.
     # heatmap = heatmaps[0]
     # elements = len(back_pass)
-    p = tf.constant(mask)
+
     add_percent_tensors(-1,
                         [head_mapping(tmp) for tmp in inputs],
-                        [p])
+                        p)
 
     for _nid, (layer, Xs, Ys) in enumerate(execution_list):
         if isinstance(layer, keras.layers.InputLayer):
@@ -1376,6 +1385,12 @@ def forward_model(model, reverse_mappings,
                 # reversed tensor set because it depends on a tensor
                 # that is listed in stop_mapping_at_tensors.
                 continue
+
+            if Ys == outputs:
+                last = True
+            else:
+                last = False
+
             forward_Xs = [get_forward_tensors(xs)
                            for xs in Xs]
 
@@ -1388,10 +1403,6 @@ def forward_model(model, reverse_mappings,
             local_stop_mapping_at_tensors = [y for y in Ys
                                              if y in stop_mapping_at_tensors]
 
-            if Ys == outputs:
-                last = True
-            else:
-                last = False
 
 
             reverse_mapping = initialized_forward_mappings[layer]
@@ -1407,6 +1418,7 @@ def forward_model(model, reverse_mappings,
                     "stop_mapping_at_tensors": local_stop_mapping_at_tensors,
                     "p_Xs": p_Xs,
                     "last": last,
+                    "the_label_index": the_label_index,
                     "relevance_prime": forward_Xs,
                     "percent": percent_relevance,
 
@@ -1419,11 +1431,11 @@ def forward_model(model, reverse_mappings,
             else:
                 forward_RYs = iutils.to_list(forward_Ys)
                 add_forward_tensors(_nid, Ys, forward_RYs)
-                # continue
-                pass
+                continue
+                # pass
 
             forward_RYs = iutils.to_list(forward_RYs)
-
+            percent_ys = iutils.to_list(percent_ys)
             add_forward_tensors(_nid, Ys, forward_RYs)
             add_percent_tensors(_nid, Ys, percent_ys)
 

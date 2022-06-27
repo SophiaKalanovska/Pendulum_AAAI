@@ -1,3 +1,5 @@
+import random
+
 import numpy as np
 import six
 
@@ -77,28 +79,35 @@ class ReverseAnalyzerBase(AnalyzerNetworkBase):
         super(ReverseAnalyzerBase, self).__init__(model, **kwargs)
 
     def _gradient_reverse_mapping(self, Xs, Ys, reversed_Ys, reverse_state, forward = False):
-        prepare_div = tf.keras.layers.Lambda(
-            lambda x: x + (K.cast(K.greater_equal(x, 0), K.floatx()) * 2 - 1) * K.epsilon())
         if forward:
-            Zs = kutils.apply(reverse_state['layer'], Xs)
-
-            X_prime = [tf.keras.layers.Multiply()([a, b])
-                       for a, b in zip(Xs, reverse_state["percent"])]
-
-            Zs_prime = kutils.apply(reverse_state['layer'], X_prime)
-
-            percent = [ilayers.SafeDivide()([n, prepare_div(d)])
-                       for n, d in zip(Zs_prime, Zs)]
-
-
-            R_prime = [tf.keras.layers.Multiply()([a, b])
-                       for a, b in zip(reversed_Ys, percent)]
             if reverse_state["last"]:
-                percent = [tf.expand_dims(percent[0], 0)]
-                R_prime = [tf.keras.layers.Multiply()([a, b])
-                           for a, b in zip(reversed_Ys, percent)]
+                # percent = [tf.expand_dims(percent[0], 0)]
+                # R_prime = [tf.keras.layers.Multiply()([a, b])
+                #            for a, b in zip(reversed_Ys, percent)]
+                # X_prime = [tf.keras.layers.Multiply()([a, b])
+                #            for a, b in zip(Xs, reverse_state["percent"])]
+                R_prime = tf.expand_dims(reverse_state["relevance_prime"][0][0][reverse_state["the_label_index"][0]], 0)
                 return R_prime
             else:
+                self._layer_wo_act = kgraph.copy_layer_wo_activation(reverse_state["layer"],
+                                                                     name_template="reversed_kernel_%s" + str(
+                                                                         random.randint(0, 10000000)))
+
+                prepare_div = tf.keras.layers.Lambda(
+                    lambda x: x + (K.cast(K.greater_equal(x, 0), K.floatx()) * 2 - 1) * K.epsilon())
+
+                Zs = kutils.apply(self._layer_wo_act, Xs)
+
+                X_prime = [tf.keras.layers.Multiply()([a, b])
+                           for a, b in zip(Xs, reverse_state["percent"])]
+
+                Zs_prime = kutils.apply(reverse_state['layer'], X_prime)
+
+                percent = [ilayers.SafeDivide()([n, prepare_div(d)])
+                           for n, d in zip(Zs_prime, Zs)]
+
+                R_prime = [tf.keras.layers.Multiply()([a, b])
+                           for a, b in zip(reversed_Ys, percent)]
                 return R_prime, percent
         else:
             mask = [x not in reverse_state["stop_mapping_at_tensors"] for x in Xs]
@@ -209,11 +218,13 @@ class ReverseAnalyzerBase(AnalyzerNetworkBase):
             return_all_reversed_tensors=return_all_reversed_tensors)
     def _forward_model(self,
                        model,
+                       the_label_index,
                        stop_analysis_at_tensors=[],
                        return_all_reversed_tensors=False,
                        mask=[]):
         return kgraph.forward_model(
             model,
+            the_label_index,
             reverse_mappings=self._reverse_mapping,
             default_reverse_mapping=self._default_reverse_mapping,
             head_mapping=self._head_mapping,
@@ -334,9 +345,17 @@ class ReverseAnalyzerBase(AnalyzerNetworkBase):
             project_bottleneck_tensors=self._reverse_project_bottleneck_layers,
             return_all_reversed_tensors=return_all_reversed_tensors)
 
-    def _pendulum(self, model, stop_analysis_at_tensors=[], mask =[], return_all_reversed_tensors=True):
+    def _pendulum(self, model, the_label_index, stop_analysis_at_tensors=[], mask=[], return_all_reversed_tensors=True):
+
+        return_all_reversed_tensors = (
+                self._reverse_check_min_max_values or
+                self._reverse_check_finite or
+                self._reverse_keep_tensors
+        )
+
         ret = self._forward_model(
             model,
+            the_label_index,
             stop_analysis_at_tensors=[],
             return_all_reversed_tensors=True,
             mask=mask
@@ -344,12 +363,9 @@ class ReverseAnalyzerBase(AnalyzerNetworkBase):
 
         if return_all_reversed_tensors:
             ret = (self._postprocess_analysis(ret[0]), ret[1])
-            # self._reversed_tensors = ret[1]
-            # ret = ret[0]
         else:
             ret = self._postprocess_analysis(ret)
-            #
-            # return_all_reversed_tensors = False
+
         if return_all_reversed_tensors:
             debug_tensors = []
             self._debug_tensors_indices = {}

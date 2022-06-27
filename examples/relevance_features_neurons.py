@@ -55,6 +55,7 @@ if __name__ == "__main__":
     x = preprocess(image[None])
 
     pr = model.predict_on_batch(x)
+    the_label_index = np.argmax(pr, axis=1)
     predictions = inception.decode_predictions(pr)
     print(predictions)
     # distribute the relevance to the input layer
@@ -82,10 +83,10 @@ if __name__ == "__main__":
 
     # heatmaps = mask_to_relevance.mask_to_input_relevance_of_mask(masks, a, image_name)
 
-    forward_analyzer = innvestigate.create_analyzer("lrp.alpha_1_beta_0", model)
+    # forward_analyzer = innvestigate.create_analyzer("lrp.alpha_1_beta_0", model)
     masks_relevances = []
     for mask in masks:
-        masks_relevances.append(analyzer.propagate_forward(x, mask))
+        masks_relevances.append(analyzer.propagate_forward(x, mask, the_label_index))
     print(masks_relevances)
 
 

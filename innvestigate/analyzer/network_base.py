@@ -148,7 +148,7 @@ class AnalyzerNetworkBase(AnalyzerBase):
             inputs=model_inputs + analysis_inputs + constant_inputs,
             outputs=analysis_outputs + debug_outputs)
 
-    def create_forward_analyzer_model(self, mask):
+    def create_forward_analyzer_model(self, mask, the_label_index):
         """
             Creates the analyze functionality. If not called beforehand
             it will be called by :func:`analyze`.
@@ -160,7 +160,7 @@ class AnalyzerNetworkBase(AnalyzerBase):
         self._prepared_model = model
 
         tmp = self._pendulum(
-            model, stop_analysis_at_tensors=stop_analysis_at_tensors, mask=mask)
+            model, the_label_index, stop_analysis_at_tensors=stop_analysis_at_tensors, mask=mask)
         if isinstance(tmp, tuple):
             if len(tmp) == 3:
                 analysis_outputs, debug_outputs, constant_inputs = tmp
@@ -214,7 +214,7 @@ class AnalyzerNetworkBase(AnalyzerBase):
     def _handle_debug_output(self, debug_values):
         raise NotImplementedError()
 
-    def _pendulum(self, model, stop_analysis_at_tensors=[], mask=[]):
+    def _pendulum(self, model, the_label_index, stop_analysis_at_tensors=[], mask=[]):
         raise NotImplementedError()
 
     def analyze(self, X, neuron_selection=None):
@@ -263,8 +263,8 @@ class AnalyzerNetworkBase(AnalyzerBase):
             ret = ret[0]
         return ret, tensors_Xs
 
-    def propagate_forward(self, X, mask, neuron_selection=None):
-        self.create_forward_analyzer_model(mask)
+    def propagate_forward(self, X, mask, the_label_index, neuron_selection=None):
+        self.create_forward_analyzer_model(mask, the_label_index)
         X = iutils.to_list(X)
 
         if (neuron_selection is not None and
@@ -292,10 +292,10 @@ class AnalyzerNetworkBase(AnalyzerBase):
             ret = self._analyzer_model.predict_on_batch(X)
 
         if self._n_debug_output > 0:
+            relevance_prime = ret[-self._n_debug_output:]
             self._handle_debug_output(ret[-self._n_debug_output:])
             ret, = ret[:-self._n_debug_output]
 
-        tensors_Xs = self._reversed_tensors
 
         if isinstance(ret, list) and len(ret) == 1:
             ret = ret[0]
