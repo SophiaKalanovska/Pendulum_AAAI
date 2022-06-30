@@ -92,10 +92,6 @@ class ReverseAnalyzerBase(AnalyzerNetworkBase):
                 self._layer_wo_act = kgraph.copy_layer_wo_activation(reverse_state["layer"],
                                                                      name_template="reversed_kernel_%s" + str(
                                                                          random.randint(0, 10000000)))
-
-                prepare_div = tf.keras.layers.Lambda(
-                    lambda x: x + (K.cast(K.greater_equal(x, 0), K.floatx()) * 2 - 1) * K.epsilon())
-
                 Zs = kutils.apply(self._layer_wo_act, Xs)
 
                 X_prime = [tf.keras.layers.Multiply()([a, b])
@@ -103,7 +99,7 @@ class ReverseAnalyzerBase(AnalyzerNetworkBase):
 
                 Zs_prime = kutils.apply(reverse_state['layer'], X_prime)
 
-                percent = [ilayers.SafeDivide()([n, prepare_div(d)])
+                percent = [tf.math.divide_no_nan(n, d)
                            for n, d in zip(Zs_prime, Zs)]
 
                 R_prime = [tf.keras.layers.Multiply()([a, b])

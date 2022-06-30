@@ -1355,8 +1355,11 @@ def forward_model(model,
     # Initialize the reverse tensor mappings.
     # p = [tf.constant(mask)]
     p = [tf.ones_like(inputs[0])]
+    relevance_input = [get_reversed_tensor(x)
+                       for x in inputs]
+    # p = [tf.keras.layers.Subtract()([tf.ones_like(inputs[0]), tf.constant(mask)])]
     relevance_input = [tf.keras.layers.Multiply()([a, b])
-                           for a, b in zip(inputs, p)]
+                           for a, b in zip(relevance_input, p)]
     add_forward_tensors(-1,
                          [head_mapping(tmp) for tmp in inputs],
                          relevance_input)
@@ -1372,6 +1375,7 @@ def forward_model(model,
     for _nid, (layer, Xs, Ys) in enumerate(execution_list):
         if isinstance(layer, keras.layers.InputLayer):
             [get_forward_tensors(xs) for xs in Xs]
+            [get_percent_tensors(xs) for xs in Xs]
             # Special case. Do nothing.
             pass
         elif kchecks.is_network(layer):
@@ -1446,6 +1450,6 @@ def forward_model(model,
                               if tmp not in stop_mapping_at_tensors]
 
     if return_all_reversed_tensors is True:
-        return forward_output_tensors, forward_tensors
+        return forward_output_tensors, percent_tensors
     else:
         return forward_output_tensors

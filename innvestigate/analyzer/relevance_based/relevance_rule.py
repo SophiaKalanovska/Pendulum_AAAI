@@ -338,8 +338,8 @@ class AlphaBetaRule(kgraph.ReverseMappingBase):
             Zs_prime = [keras.layers.Add()([a, b])
                   for a, b in zip(Z1_prime, Z2_prime)]
 
-            percent = [ilayers.SafeDivide()([n, prepare_div(d)])
-             for n, d in zip(Zs_prime, Zs)]
+            percent = [tf.math.divide_no_nan(n, d)
+                       for n, d in zip(Zs_prime, Zs)]
 
             R_prime = [keras.layers.Multiply()([a, b])
              for a, b in zip(Rs, percent)]

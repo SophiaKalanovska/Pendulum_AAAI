@@ -216,6 +216,7 @@ class BatchNormalizationReverseLayer(kgraph.ReverseMappingBase):
 
         self._mean = layer.moving_mean
         self._std = layer.moving_variance
+        self.axis = layer.axis
         if self._center:
             self._beta = layer.beta
 
@@ -268,33 +269,34 @@ class BatchNormalizationReverseLayer(kgraph.ReverseMappingBase):
         denominator_2 = [keras.layers.Multiply()([x, ymb])
                     for x, ymb in zip(Xs, y_minus_beta)]
         if forward:
-            self._layer_wo_act = kgraph.copy_layer_wo_activation(reverse_state["layer"],
-                                                                 name_template="reversed_kernel_%s" + str(
-                                                                     random.randint(0, 10000000)))
-
-            prepare_div = keras.layers.Lambda(
-                lambda x: x + (K.cast(K.greater_equal(x, 0), K.floatx()) * 2 - 1) * K.epsilon())
-            Zs = kutils.apply(self._layer_wo_act, Xs)
-
-            Xs_prime = [keras.layers.Multiply()([a, b])
-                        for a, b in zip(Xs, reverse_state["percent"])]
-
-            Zs_prime = kutils.apply(self._layer_wo_act, Xs_prime)
-
-            percent = [ilayers.SafeDivide()([n, prepare_div(d)])
-                       for n, d in zip(Zs_prime, Zs)]
-
-            R_prime = [keras.layers.Multiply()([a, b])
-                       for a, b in zip(Rs, percent)]
-
-            return R_prime, reverse_state["percent"]
-            # tmp = [ilayers.SafeDivide()([n, prepare_div(d)])
-            #                                                 for n, d in zip(denominator, denominator_2)]
-            # return [keras.layers.Multiply()([tmp, r])
-            #         for tmp, r in zip(tmp, reverse_state["relevance_prime"])], reverse_state["percent"]
+            # self._layer_wo_act = kgraph.copy_layer_wo_activation(reverse_state["layer"],
+            #                                                      name_template="reversed_kernel_%s" + str(
+            #                                                          random.randint(0, 10000000)))
+            #
+            # prepare_div = keras.layers.Lambda(
+            #     lambda x: x + (K.cast(K.greater_equal(x, 0), K.floatx()) * 2 - 1) * K.epsilon())
+            # Zs = kutils.apply(self._layer_wo_act, Xs)
+            #
+            # Xs_prime = [keras.layers.Multiply()([a, b])
+            #             for a, b in zip(Xs, reverse_state["percent"])]
+            #
+            # Zs_prime = kutils.apply(self._layer_wo_act, Xs_prime)
+            #
+            # percent = [ilayers.SafeDivide()([n, prepare_div(d)])
+            #            for n, d in zip(Zs_prime, Zs)]
+            #
+            # R_prime = [keras.layers.Multiply()([a, b])
+            #            for a, b in zip(Rs, percent)]
+            #
+            # return R_prime, reverse_state["percent"]
+            tmp = [ilayers.SafeDivide()([n, prepare_div(d)])
+                                                            for n, d in zip(denominator, denominator_2)]
+            return [keras.layers.Multiply()([tmp, r])
+                    for tmp, r in zip(tmp, reverse_state["relevance_prime"])], reverse_state["percent"]
         else:
             return [ilayers.SafeDivide()([n, prepare_div(d)])
                     for n, d in zip(numerator, denominator)]
+
 
 
 class AddReverseLayer(kgraph.ReverseMappingBase):
@@ -357,7 +359,7 @@ class AveragePoolingReverseLayer(kgraph.ReverseMappingBase):
             Zs_prime = kutils.apply(self._layer_wo_act, Xs_prime)
 
 
-            percent = [ilayers.SafeDivide()([n, prepare_div(d)])
+            percent = [tf.math.divide_no_nan(n, d)
                        for n, d in zip(Zs_prime, Zs)]
 
             R_prime = [keras.layers.Multiply()([a, b])
@@ -539,6 +541,26 @@ class LRP(ReverseAnalyzerBase):
                 # There is not mixing of relevances as there is kernel,
                 # therefore we pass them as they are.
                 ##print('return R')
+                # self._layer_wo_act = kgraph.copy_layer_wo_activation(reverse_state["layer"],
+                #                                                      name_template="reversed_kernel_%s" + str(
+                #                                                          random.randint(0, 10000000)))
+                #
+                # prepare_div = tf.keras.layers.Lambda(
+                #     lambda x: x + (K.cast(K.greater_equal(x, 0), K.floatx()) * 2 - 1) * K.epsilon())
+                #
+                # Zs = kutils.apply(self._layer_wo_act, Xs)
+                #
+                # X_prime = [tf.keras.layers.Multiply()([a, b])
+                #            for a, b in zip(Xs, reverse_state["percent"])]
+                #
+                # Zs_prime = kutils.apply(self._layer_wo_act, X_prime)
+                #
+                # percent = [ilayers.SafeDivide()([n, prepare_div(d)])
+                #            for n, d in zip(Zs_prime, Zs)]
+                #
+                # R_prime = [tf.keras.layers.Multiply()([a, b])
+                #            for a, b in zip(reversed_Ys, percent)]
+
                 return reverse_state["relevance_prime"], reverse_state["percent"]
             else:
                 # This branch covers:
@@ -554,23 +576,20 @@ class LRP(ReverseAnalyzerBase):
                     percent = kutils.apply(reverse_state["layer"], reverse_state["percent"])
                 else:
                     self._layer_wo_act = kgraph.copy_layer_wo_activation(reverse_state["layer"],
-                                                                         name_template="reversed_kernel_%s"+ str(random.randint(0, 10000000)))
-
-                    prepare_div = tf.keras.layers.Lambda(
-                        lambda x: x + (K.cast(K.greater_equal(x, 0), K.floatx()) * 2 - 1) * K.epsilon())
+                                                                             name_template="reversed_kernel_%s"+ str(random.randint(0, 10000000)))
 
                     Zs = kutils.apply(self._layer_wo_act, Xs)
 
                     X_prime = [tf.keras.layers.Multiply()([a, b])
-                                for a, b in zip(Xs, reverse_state["percent"])]
+                                    for a, b in zip(Xs, reverse_state["percent"])]
 
                     Zs_prime = kutils.apply(self._layer_wo_act, X_prime)
 
-                    percent = [ilayers.SafeDivide()([n, prepare_div(d)])
-                                for n, d in zip(Zs_prime, Zs)]
+                    percent = [tf.math.divide_no_nan(n, d)
+                       for n, d in zip(Zs_prime, Zs)]
 
                     R_prime = [tf.keras.layers.Multiply()([a, b])
-                                for a, b in zip(reversed_Ys, percent)]
+                                    for a, b in zip(reversed_Ys, percent)]
                 return R_prime, percent
 
         else:
